@@ -21,6 +21,7 @@ public:
 	static void writeMemHookProc(uintptr_t addr, uintptr_t func);
 	static void installPLTHook(uintptr_t addr, uintptr_t func, uintptr_t *orig);
 	static void installHook(uintptr_t addr, uintptr_t func, uintptr_t *orig);
+	static void installHook(uintptr_t addr, uintptr_t func);
 	static void installMethodHook(uintptr_t addr, uintptr_t func);
 	static void putCode(uintptr_t addr, uintptr_t point, uintptr_t func);
 	static void injectCode(uintptr_t addr, uintptr_t func, int reg);

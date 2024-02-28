@@ -41,10 +41,11 @@ uintptr_t ARMHook::getLibraryAddress(const char* library)
 
 uint8_t ARMHook::getByteSumFromAddress(uintptr_t dest, uint16_t count)
 {
+    uintptr_t destAddr = (g_libGTASA + dest);
 	uint8_t sum = 0;
 	uint16_t byte = 0;
 	while (byte != count)
-		sum ^= *(uint8_t*)(dest + byte++) & 0xCC;
+		sum ^= *(uint8_t*)(destAddr + byte++) & 0xCC;
 	
 	return sum;
 }
@@ -61,7 +62,7 @@ uintptr_t ARMHook::getSymbolAddress(const char *library, const char *symbol)
 
 void ARMHook::initialiseTrampolines(uintptr_t dest, uintptr_t size)
 {
-	local_trampoline   = dest;
+	local_trampoline   = g_libGTASA + dest;
 	remote_trampoline  = local_trampoline + size;
 
 	arm_mmap_start = (uintptr_t)mmap(0, PAGE_SIZE, PROT_WRITE | PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -79,32 +80,41 @@ void ARMHook::uninitializeTrampolines()
 
 void ARMHook::unprotect(uintptr_t ptr)
 {
-	mprotect((void*)(ptr & 0xFFFFF000), PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC);
+    uintptr_t destAddr = (g_libGTASA + ptr);
+	mprotect((void*)(destAddr & 0xFFFFF000), PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC);
 }
 
 void ARMHook::writeMemory(uintptr_t dest, uintptr_t src, size_t size)
 {
-	ARMHook::unprotect(dest);
-	memcpy((void*)dest, (void*)src, size);
-	cacheflush(dest, dest+size, 0);
+    uintptr_t destAddr = (g_libGTASA + dest);
+
+	ARMHook::unprotect(destAddr);
+	memcpy((void*)destAddr, (void*)src, size);
+	cacheflush(destAddr, destAddr+size, 0);
 }
 
 void ARMHook::readMemory(uintptr_t dest, uintptr_t src, size_t size)
 {
+    uintptr_t destAddr = (g_libGTASA + dest);
+
 	ARMHook::unprotect(src);
-    memcpy((void*)dest, (void*)src, size);
+    memcpy((void*)destAddr, (void*)src, size);
 }
 
 void ARMHook::makeRET(uintptr_t dest)
 {
-    ARMHook::writeMemory(dest, (uintptr_t)"\x00\x20\xF7\x46", 4);
+    uintptr_t destAddr = (g_libGTASA + dest);
+
+    ARMHook::writeMemory(destAddr, (uintptr_t)"\x00\x20\xF7\x46", 4);
 }
 
 void ARMHook::makeNOP(uintptr_t addr, unsigned int count)
 {
-	ARMHook::unprotect(addr);
+    uintptr_t destAddr = (g_libGTASA + addr);
 
-    for(uintptr_t ptr = addr; ptr != (addr+(count*2)); ptr += 2)
+	ARMHook::unprotect(destAddr);
+
+    for(uintptr_t ptr = destAddr; ptr != (destAddr+(count*2)); ptr += 2)
     {
         *(char*)ptr = 0x00;
         *(char*)(ptr+1) = 0x46;
@@ -113,54 +123,84 @@ void ARMHook::makeNOP(uintptr_t addr, unsigned int count)
 
 void ARMHook::makeJump(uintptr_t func, uintptr_t addr)
 {
-	uint32_t code = ((addr-func-4) >> 12) & 0x7FF | 0xF000 | ((((addr-func-4) >> 1) & 0x7FF | 0xB800) << 16);
+    uintptr_t destAddr = (g_libGTASA + addr);
+
+	uint32_t code = ((destAddr-func-4) >> 12) & 0x7FF | 0xF000 | ((((destAddr-func-4) >> 1) & 0x7FF | 0xB800) << 16);
     ARMHook::writeMemory(func, (uintptr_t)&code, 4);
 }
 
 void ARMHook::writeMemHookProc(uintptr_t addr, uintptr_t func)
 {
+    uintptr_t destAddr = (g_libGTASA + addr);
+
     char code[16];
     memcpy(code, HOOK_PROC_ARM, 16);
     *(uint32_t*)&code[12] = (func | 1);
-    ARMHook::writeMemory(addr, (uintptr_t)code, 16);
+    ARMHook::writeMemory(destAddr, (uintptr_t)code, 16);
 }
 
 void ARMHook::installPLTHook(uintptr_t addr, uintptr_t func, uintptr_t *orig)
 {
-    ARMHook::unprotect(addr);
-    *orig = *(uintptr_t*)addr;
-    *(uintptr_t*)addr = func;
+    uintptr_t destAddr = (g_libGTASA + addr);
+
+    ARMHook::unprotect(destAddr);
+    *orig = *(uintptr_t*)destAddr;
+    *(uintptr_t*)destAddr = func;
 }
 
 void ARMHook::installHook(uintptr_t addr, uintptr_t func, uintptr_t *orig)
 {
+    uintptr_t destAddr = (g_libGTASA + addr);
+
     if(remote_trampoline < (local_trampoline + 0x10) || arm_mmap_end < (arm_mmap_start + 0x20))
         return std::terminate();
 
-    ARMHook::readMemory(arm_mmap_start, addr, 4);
-    ARMHook::writeMemHookProc(arm_mmap_start + 4, addr+4);
+    ARMHook::readMemory(arm_mmap_start, destAddr, 4);
+    ARMHook::writeMemHookProc(arm_mmap_start + 4, destAddr+4);
     *orig = arm_mmap_start + 1;
     arm_mmap_start += 32;
 
-    ARMHook::makeJump(addr, local_trampoline);
+    ARMHook::makeJump(destAddr, local_trampoline);
+    ARMHook::writeMemHookProc(local_trampoline, func);
+    local_trampoline += 16;
+}
+
+void ARMHook::installHook(uintptr_t addr, uintptr_t func)
+{
+    uintptr_t destAddr = (g_libGTASA + addr);
+
+    if(remote_trampoline < (local_trampoline + 0x10) || arm_mmap_end < (arm_mmap_start + 0x20))
+        return std::terminate();
+
+    ARMHook::readMemory(arm_mmap_start, destAddr, 4);
+    ARMHook::writeMemHookProc(arm_mmap_start + 4, destAddr+4);
+    arm_mmap_start += 32;
+
+    ARMHook::makeJump(destAddr, local_trampoline);
     ARMHook::writeMemHookProc(local_trampoline, func);
     local_trampoline += 16;
 }
 
 void ARMHook::installMethodHook(uintptr_t addr, uintptr_t func)
 {
-    ARMHook::unprotect(addr);
-    *(uintptr_t*)addr = func;
+    uintptr_t destAddr = (g_libGTASA + addr);
+
+    ARMHook::unprotect(destAddr);
+    *(uintptr_t*)destAddr = func;
 }
 
 void ARMHook::putCode(uintptr_t addr, uintptr_t point, uintptr_t func)
 {
-    ARMHook::unprotect(addr+point);
-    *(uintptr_t*)(addr+point) = func;
+    uintptr_t destAddr = (g_libGTASA + addr);
+
+    ARMHook::unprotect(destAddr+point);
+    *(uintptr_t*)(destAddr+point) = func;
 }
 
 void ARMHook::injectCode(uintptr_t addr, uintptr_t func, int reg)
 {
+    uintptr_t destAddr = (g_libGTASA + addr);
+
     char injectCode[12];
 
     injectCode[0] = 0x01;
@@ -174,5 +214,5 @@ void ARMHook::injectCode(uintptr_t addr, uintptr_t func, int reg)
     
     *(uintptr_t*)&injectCode[8] = func;
 
-    ARMHook::writeMemory(addr, (uintptr_t)injectCode, 12);
+    ARMHook::writeMemory(destAddr, (uintptr_t)injectCode, 12);
 }

@@ -39,8 +39,9 @@
 #include <arpa/inet.h>
 #include <sys/syscall.h>
 
-#include "util/armhook.h"
+#include "armhook.h"
 
+#include "game_sa.h"
 #include "projectsa.h"
 
 #define GTASA_LIBNAME "libGTASA.so"

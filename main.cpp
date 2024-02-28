@@ -13,8 +13,8 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved)
 		return 0;
 	}
 
-	ARMHook::makeRET(g_libGTASA+0x3F6580);
-	ARMHook::initialiseTrampolines(g_libGTASA+0x3F6584, 0x2D2);
+	ARMHook::makeRET(0x3F6580);
+	ARMHook::initialiseTrampolines(0x3F6584, 0x2D2);
 
 	CProjectSA::InitPatch();
 	CProjectSA::InitHooks();
